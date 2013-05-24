@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2011 The Android Open Source Project
  * Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+ * Not a Contribution.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -151,6 +152,14 @@ struct audio_config {
 };
 typedef struct audio_config audio_config_t;
 
+/** Structure to save buffer information for applying effects for
+ *  LPA buffers */
+struct buf_info {
+    int bufsize;
+    int nBufs;
+    int **buffers;
+};
+
 /* common audio stream parameters and operations */
 struct audio_stream {
 
@@ -298,86 +307,53 @@ struct audio_stream_out {
                                uint32_t *dsp_frames);
 
     /**
+     * start audio data rendering
+     */
+    int (*start)(struct audio_stream_out *stream);
+
+    /**
+     * pause audio rendering
+     */
+    int (*pause)(struct audio_stream_out *stream);
+
+    /**
+     * flush audio data with driver
+     */
+    int (*flush)(struct audio_stream_out *stream);
+
+    /**
+     * stop audio data rendering
+     */
+    int (*stop)(struct audio_stream_out *stream);
+
+    /**
      * get the local time at which the next write to the audio driver will be presented.
      * The units are microseconds, where the epoch is decided by the local audio HAL.
      */
     int (*get_next_write_timestamp)(const struct audio_stream_out *stream,
                                     int64_t *timestamp);
-
     /**
-     * set the callback function for notifying completion of non-blocking
-     * write and drain.
-     * Calling this function implies that all future write() and drain()
-     * must be non-blocking and use the callback to signal completion.
+    * return the current timestamp after quering to the driver
      */
-    int (*set_callback)(struct audio_stream_out *stream,
-            stream_callback_t callback, void *cookie);
-
+    int (*get_time_stamp)(const struct audio_stream_out *stream,
+                               uint64_t *time_stamp);
     /**
-     * Notifies to the audio driver to stop playback however the queued buffers are
-     * retained by the hardware. Useful for implementing pause/resume. Empty implementation
-     * if not supported however should be implemented for hardware with non-trivial
-     * latency. In the pause state audio hardware could still be using power. User may
-     * consider calling suspend after a timeout.
-     *
-     * Implementation of this function is mandatory for offloaded playback.
+    * EOS notification from HAL to Player
      */
-    int (*pause)(struct audio_stream_out* stream);
-
+    int (*set_observer)(const struct audio_stream_out *stream,
+                               void *observer);
     /**
-     * Notifies to the audio driver to resume playback following a pause.
-     * Returns error if called without matching pause.
-     *
-     * Implementation of this function is mandatory for offloaded playback.
+     * Get the physical address of the buffer allocated in the
+     * driver
      */
-    int (*resume)(struct audio_stream_out* stream);
-
+    int (*get_buffer_info) (const struct audio_stream_out *stream,
+                                struct buf_info **buf);
     /**
-     * Requests notification when data buffered by the driver/hardware has
-     * been played. If set_callback() has previously been called to enable
-     * non-blocking mode, the drain() must not block, instead it should return
-     * quickly and completion of the drain is notified through the callback.
-     * If set_callback() has not been called, the drain() must block until
-     * completion.
-     * If type==AUDIO_DRAIN_ALL, the drain completes when all previously written
-     * data has been played.
-     * If type==AUDIO_DRAIN_EARLY_NOTIFY, the drain completes shortly before all
-     * data for the current track has played to allow time for the framework
-     * to perform a gapless track switch.
-     *
-     * Drain must return immediately on stop() and flush() call
-     *
-     * Implementation of this function is mandatory for offloaded playback.
+     * Check if next buffer is available. Waits until next buffer is
+     * available
      */
-    int (*drain)(struct audio_stream_out* stream, audio_drain_type_t type );
-
-    /**
-     * Notifies to the audio driver to flush the queued data. Stream must already
-     * be paused before calling flush().
-     *
-     * Implementation of this function is mandatory for offloaded playback.
-     */
-   int (*flush)(struct audio_stream_out* stream);
-
-    /**
-     * Return a recent count of the number of audio frames presented to an external observer.
-     * This excludes frames which have been written but are still in the pipeline.
-     * The count is not reset to zero when output enters standby.
-     * Also returns the value of CLOCK_MONOTONIC as of this presentation count.
-     * The returned count is expected to be 'recent',
-     * but does not need to be the most recent possible value.
-     * However, the associated time should correspond to whatever count is returned.
-     * Example:  assume that N+M frames have been presented, where M is a 'small' number.
-     * Then it is permissible to return N instead of N+M,
-     * and the timestamp should correspond to N rather than N+M.
-     * The terms 'recent' and 'small' are not defined.
-     * They reflect the quality of the implementation.
-     *
-     * 3.0 and higher only.
-     */
-    int (*get_presentation_position)(const struct audio_stream_out *stream,
-                               uint64_t *frames, struct timespec *timestamp);
-
+    int (*is_buffer_available) (const struct audio_stream_out *stream,
+                                     int *isAvail);
 };
 typedef struct audio_stream_out audio_stream_out_t;
 
@@ -601,7 +577,16 @@ static inline int audio_hw_device_close(struct audio_hw_device* device)
     return device->common.close(&device->common);
 }
 
-
+#ifdef __cplusplus
+/**
+ *Observer class to post the Events from HAL to Flinger
+*/
+class AudioEventObserver {
+public:
+    virtual ~AudioEventObserver() {}
+    virtual void postEOS(int64_t delayUs) = 0;
+};
+#endif
 __END_DECLS
 
 #endif  // ANDROID_AUDIO_INTERFACE_H
